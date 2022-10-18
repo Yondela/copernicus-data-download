@@ -82,6 +82,12 @@ class MainWindow(wx.Frame):
         self.coordinates_input_text = wx.TextCtrl(self.left_panel, style=wx.TE_MULTILINE)
         self.coordinates_hbox.Add(self.coordinates_input_text)
 
+        self.results_per_page_hbox = wx.BoxSizer(wx.HORIZONTAL)
+        self.results_per_page_label = wx.StaticText(self.left_panel, label="Number of results per page (max. 100): ")
+        self.results_per_page_hbox.Add(self.results_per_page_label)
+        self.results_per_page_input_text = wx.TextCtrl(self.left_panel, value="10")
+        self.results_per_page_hbox.Add(self.results_per_page_input_text)
+
         self.search_submit = wx.Button(self.left_panel, label="Search", name="Search Button")
 
         self.Bind(wx.EVT_BUTTON, self.SearchButtonClick, id=self.search_submit.GetId())
@@ -97,6 +103,7 @@ class MainWindow(wx.Frame):
         self.left_vbox.Add(self.from_date_hbox)
         self.left_vbox.Add(self.to_date_hbox)
         self.left_vbox.Add(self.coordinates_hbox)
+        self.left_vbox.Add(self.results_per_page_hbox)
         self.left_vbox.Add(self.search_submit)
         #self.left_vbox.Add(self.download_directory_hbox)
 
@@ -105,7 +112,7 @@ class MainWindow(wx.Frame):
         self.left_panel.SetSizer(self.left_vbox)
         self.right_panel.SetSizer(self.right_vbox)
 
-        self.main_window.SplitVertically(self.left_panel, self.right_panel, sashPosition=300)
+        self.main_window.SplitVertically(self.left_panel, self.right_panel, sashPosition=500)
 ##########################################################################################
 
         ## Setting up the panels
@@ -151,15 +158,19 @@ class MainWindow(wx.Frame):
 
         self.right_vbox.Clear(True)
 
-        #from_date = "2021-09-09"
-        #to_date = "2022-09-10"
+        #self.from_date = "2021-09-09"
+        #self.to_date = "2022-09-10"
         #area_coordinates = "-30.725229, 25.084173"
+        #self.coordinates = ["-30.725229, 25.084173"]
+
         self.username = self.username_input_text.GetLineText(0)
         self.password = self.password_input_text.GetLineText(0)
         self.from_date = self.from_date_input_text.GetLineText(0)
         self.to_date = self.to_date_input_text.GetLineText(0)
         self.coordinates = list()
         self.area_coordinates = ""
+        self.results_per_page = self.results_per_page_input_text.GetLineText(0)
+        self.startPage = 0
 
         #area_coordinates = self.coordinates_input_text.GetLineText(0)
         for i in range(0,self.coordinates_input_text.GetNumberOfLines()):
@@ -188,7 +199,11 @@ class MainWindow(wx.Frame):
             # Please enter the coordinates
             self.right_vbox.Add(wx.StaticText(self.right_panel, label="Please enter at least 1 coordinate pair."))
 
-        elif self.username != "" and self.password != "" and self.FromAndToDateCheck(self.from_date, self.to_date) and self.CoordinatesCheck(self.coordinates):
+        elif self.results_per_page == "":
+            # Please enter a number for results per page
+            self.right_vbox.Add(wx.StaticText(self.right_panel, label="Please enter the number of results you would like to see in the search."))
+
+        elif self.username != "" and self.password != "" and self.FromAndToDateCheck(self.from_date, self.to_date) and self.CoordinatesCheck(self.coordinates) and self.ResultsPerPageCheck(self.results_per_page):
             print("Every parameter has a value. It doesn't mean it's the correct value though.")
 
             #print(self.coordinates_input_text.GetNumberOfLines())
@@ -197,7 +212,7 @@ class MainWindow(wx.Frame):
 
             if len(self.coordinates) == 1:
                 self.area_coordinates = self.coordinates[0]
-                search_query = '(footprint:"Intersects(' + self.area_coordinates + ')" AND (platformname:Sentinel-1 OR platformname:Sentinel-2) AND beginposition:[' + self.from_date + 'T00:00:00.000Z TO ' + self.to_date + 'T23:59:59.999Z])'
+                self.search_query = '(footprint:"Intersects(' + self.area_coordinates + ')" AND (platformname:Sentinel-1 OR platformname:Sentinel-2) AND beginposition:[' + self.from_date + 'T00:00:00.000Z TO ' + self.to_date + 'T23:59:59.999Z])'
                 #search_query = "*"
             elif len(self.coordinates) > 2:
                 for area_coordinate_pair in self.coordinates:
@@ -205,27 +220,43 @@ class MainWindow(wx.Frame):
                 self.area_coordinates = self.area_coordinates + self.coordinates[0].replace(',', ' ')
                 print(self.area_coordinates)
                 print(self.coordinates)
-                search_query = '(footprint:"Intersects(POLYGON((' + self.area_coordinates + ')))" AND (platformname:Sentinel-1 OR platformname:Sentinel-2) AND beginposition:[' + self.from_date + 'T00:00:00.000Z TO ' + self.to_date + 'T23:59:59.999Z])'
+                self.search_query = '(footprint:"Intersects(POLYGON((' + self.area_coordinates + ')))" AND (platformname:Sentinel-1 OR platformname:Sentinel-2) AND beginposition:[' + self.from_date + 'T00:00:00.000Z TO ' + self.to_date + 'T23:59:59.999Z])'
 
-            api_url_search = "https://scihub.copernicus.eu/dhus/search?q="
-            search_result_response = requests.get(api_url_search+search_query,
+            api_url_search = "https://scihub.copernicus.eu/dhus/search?" + "start=" + str(self.startPage) + "&rows=" + self.results_per_page + "&q="
+            self.search_result_response = requests.get(api_url_search+self.search_query,
                                                   auth = HTTPBasicAuth(self.username, self.password),
                                                   allow_redirects=True)
 
-            if search_result_response.status_code == 401:
+            if self.search_result_response.status_code == 401:
 
                 self.right_vbox.Add(wx.StaticText(self.right_panel, label="There has been an error with the username and password. Please enter the correct username and password"))
 
-            elif search_result_response.status_code == 200:
-                #print(search_result_response.content)
-                #self.right_vbox.Add(wx.StaticText(self.right_panel, label=search_result_response.content.decode()))
+            elif self.search_result_response.status_code == 200:
+                #print(self.search_result_response.content)
+                #self.right_vbox.Add(wx.StaticText(self.right_panel, label=self.search_result_response.content.decode()))
 
-                search_result_root = ET.XML(search_result_response.content)
-                ET.indent(search_result_root)
+                self.search_result_root = ET.XML(self.search_result_response.content)
+                ET.indent(self.search_result_root)
 
-                search_title = search_result_root.find("{*}title")
-                search_subtitle = search_result_root.find("{*}subtitle")
-                search_items_per_page = search_result_root.find("{*}itemsPerPage")
+                print(self.search_result_response.content)
+                self.totalResults = int(self.search_result_root.find("{*}totalResults").text)
+
+                if self.totalResults > int(self.results_per_page):
+
+                    self.results_page_hbox = wx.BoxSizer(wx.HORIZONTAL)
+                    self.previous_page_button = wx.Button(self.left_panel, label="Previous page", name="Previous page Button")
+                    self.next_page_button = wx.Button(self.left_panel, label="Next page", name="Next page Button")
+                    self.results_page_hbox.Add(self.previous_page_button)
+                    self.results_page_hbox.Add(self.next_page_button)
+
+                    self.left_vbox.Add(self.results_page_hbox)
+
+                    self.Bind(wx.EVT_BUTTON, self.PreviousButtonClick, id=self.previous_page_button.GetId())
+                    self.Bind(wx.EVT_BUTTON, self.NextButtonClick, id=self.next_page_button.GetId())
+
+                search_title = self.search_result_root.find("{*}title")
+                search_subtitle = self.search_result_root.find("{*}subtitle")
+                search_items_per_page = self.search_result_root.find("{*}itemsPerPage")
                 
                 self.right_vbox.Add(wx.StaticText(self.right_panel, label=search_title.text))
                 self.right_vbox.Add(wx.StaticText(self.right_panel, label=search_subtitle.text))
@@ -237,14 +268,15 @@ class MainWindow(wx.Frame):
 
                 #print()
                 self.entries_dict = dict()
+                self.entry_number = self.startPage + 1
 
-                for entry in search_result_root.iter("{*}entry"):
+                for entry in self.search_result_root.iter("{*}entry"):
                     # entry_elements = entry.iter("{*}id", "{*}title", "{*}summary")
                     entry_id = entry.find("{*}id")
                     entry_title = entry.find("{*}title")
                     entry_summary = entry.find("{*}summary")
                     #self.right_vbox.Add(wx.StaticText(self.right_panel, label="ID: {}\nTitle: {}\nSummary: {}".format(entry_id.text, entry_title.text, entry_summary.text)), proportion=1, flag=wx.ALL, border=5)
-                    self.right_vbox.Add(wx.StaticText(self.right_panel, label="ID: {}\nTitle: {}\nSummary: {}".format(entry_id.text, entry_title.text, entry_summary.text), style=wx.ALIGN_LEFT))
+                    self.right_vbox.Add(wx.StaticText(self.right_panel, label="Number: {}\nID: {}\nTitle: {}\nSummary: {}".format(self.entry_number, entry_id.text, entry_title.text, entry_summary.text), style=wx.ALIGN_LEFT))
 
                     download_button = wx.Button(self.right_panel, label="Download")
                     self.Bind(wx.EVT_BUTTON, self.DownloadData, id=download_button.GetId())
@@ -255,23 +287,32 @@ class MainWindow(wx.Frame):
                     #print("Title: {}".format(entry_title.text))
                     #print("Summary: {}".format(entry_summary.text))
                     #print("Thumbnail")
-                    #for link in entry.findall("{*}link[@rel]"):
-                    #    if link.attrib['rel'] == 'icon':
-                    #        response = requests.get(link.attrib['href'],
-                    #                                auth = HTTPBasicAuth(self.username, self.password),
-                    #                                allow_redirects = True
-                    #                                )
-                    #        #display(Image(response.content))
-                    #        print(response.text)
-                    #        #self.right_vbox.Add(wx.Image(response.content))
-                    #        #image = wx.Image(size=(100, 100), data=response.content)
-                    #        image = wx.Image(response.text, type=wx.BITMAP_TYPE_PNG)
-                    #        #image = wx.Image(size=(200, 200), data=response.text)
-                    #        self.right_vbox.Add(image)
+                    for link in entry.findall("{*}link[@rel]"):
+                        if link.attrib['rel'] == 'icon':
+                            response = requests.get(link.attrib['href'],
+                                                    auth = HTTPBasicAuth(self.username, self.password),
+                                                    allow_redirects = True
+                                                    )
+                            #display(Image(response.content))
+                            wx.InitAllImageHandlers()
+                            stream = BytesIO(response.content)
+                            image = wx.Image(stream)
+                            #image = wx.Image(size=(600, 600), data=response.content)
+                            #print(response.text)
+                            #self.right_vbox.Add(wx.Image(response.content))
+                            #image = wx.Image(size=(100, 100), data=response.content)
+                            #image = wx.Image(response.text, type=wx.BITMAP_TYPE_PNG)
+                            #image = wx.Image(size=(200, 200), data=response.text)
+                            #self.right_vbox.Add(image)
+                            bitmap = wx.StaticBitmap(self.right_panel, bitmap=image)
+                            self.right_vbox.Add(bitmap)
 
+                    self.entry_number += 1
                     self.right_vbox.Add(wx.StaticText(self.right_panel, label="---------------------------------------------------------------"))
             #event.Skip()
+            # Note: You need to use Layout() to update the panel or Sizer.
             self.right_panel.Layout()
+            self.right_vbox.Layout()
             #self.right_panel.Fit()
             #self.right_vbox.Layout()
             #self.right_panel.Update()
@@ -284,6 +325,197 @@ class MainWindow(wx.Frame):
             
             print("This ERROR has not been caught.")
 
+    def PreviousButtonClick(self, event):
+
+        if 0 > (self.startPage - int(self.results_per_page)):
+            print("The results fit on this page, Previous Button")
+        elif 0 <= (self.startPage - int(self.results_per_page)):
+
+            self.right_vbox.Clear(True)
+            self.startPage = self.startPage - int(self.results_per_page)
+
+            #api_url_search = "https://scihub.copernicus.eu/dhus/search?" + "rows=" + self.results_per_page + "&q="
+            api_url_search = "https://scihub.copernicus.eu/dhus/search?" + "start=" + str(self.startPage) + "&rows=" + self.results_per_page + "&q="
+            self.search_result_response = requests.get(api_url_search+self.search_query,
+                                                  auth = HTTPBasicAuth(self.username, self.password),
+                                                  allow_redirects=True)
+
+            if self.search_result_response.status_code == 401:
+
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label="There has been an error with the username and password. Please enter the correct username and password"))
+
+            elif self.search_result_response.status_code == 200:
+                self.search_result_root = ET.XML(self.search_result_response.content)
+                ET.indent(self.search_result_root)
+
+                #self.totalResults = int(self.search_result_root.find("{*}totalResults").text)
+
+                #if self.totalResults > int(self.results_per_page):
+
+                #    self.results_page_hbox = wx.BoxSizer(wx.HORIZONTAL)
+                #    self.previous_page_button = wx.Button(self.left_panel, label="Previous page", name="Previous page Button")
+                #    self.next_page_button = wx.Button(self.left_panel, label="Next page", name="Next page Button")
+                #    self.results_page_hbox.Add(self.previous_page_button)
+                #    self.results_page_hbox.Add(self.next_page_button)
+
+                #    self.left_vbox.Add(self.results_page_hbox)
+
+                #    self.Bind(wx.EVT_BUTTON, self.PreviousButtonClick, id=self.previous_page_button.GetId())
+                #    self.Bind(wx.EVT_BUTTON, self.NextButtonClick, id=self.next_page_button.GetId())
+
+                search_title = self.search_result_root.find("{*}title")
+                search_subtitle = self.search_result_root.find("{*}subtitle")
+                search_items_per_page = self.search_result_root.find("{*}itemsPerPage")
+                
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label=search_title.text))
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label=search_subtitle.text))
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label=search_items_per_page.text))
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label=""))
+
+                self.entries_dict = dict()
+                self.entry_number = self.startPage + 1
+
+                for entry in self.search_result_root.iter("{*}entry"):
+                    entry_id = entry.find("{*}id")
+                    entry_title = entry.find("{*}title")
+                    entry_summary = entry.find("{*}summary")
+                    self.right_vbox.Add(wx.StaticText(self.right_panel, label="Number: {}\nID: {}\nTitle: {}\nSummary: {}".format(self.entry_number, entry_id.text, entry_title.text, entry_summary.text), style=wx.ALIGN_LEFT))
+
+                    download_button = wx.Button(self.right_panel, label="Download")
+                    self.Bind(wx.EVT_BUTTON, self.DownloadData, id=download_button.GetId())
+                    self.right_vbox.Add(download_button)
+
+                    self.entries_dict[download_button.GetId()] = [entry_id.text, entry_title]
+
+
+                    for link in entry.findall("{*}link[@rel]"):
+                        if link.attrib['rel'] == 'icon':
+                            response = requests.get(link.attrib['href'],
+                                                    auth = HTTPBasicAuth(self.username, self.password),
+                                                    allow_redirects = True
+                                                    )
+                            #display(Image(response.content))
+                            wx.InitAllImageHandlers()
+                            stream = BytesIO(response.content)
+                            image = wx.Image(stream)
+                            #image = wx.Image(size=(600, 600), data=response.content)
+                            #print(response.text)
+                            #self.right_vbox.Add(wx.Image(response.content))
+                            #image = wx.Image(size=(100, 100), data=response.content)
+                            #image = wx.Image(response.text, type=wx.BITMAP_TYPE_PNG)
+                            #image = wx.Image(size=(200, 200), data=response.text)
+                            #self.right_vbox.Add(image)
+                            bitmap = wx.StaticBitmap(self.right_panel, bitmap=image)
+                            self.right_vbox.Add(bitmap)
+
+                    self.entry_number += 1
+                    self.right_vbox.Add(wx.StaticText(self.right_panel, label="---------------------------------------------------------------"))
+            #event.Skip()
+            # Note: You need to use Layout() to update the panel or Sizer.
+            self.right_panel.Layout()
+            self.right_vbox.Layout()
+
+    def NextButtonClick(self, event):
+
+        if self.totalResults < (self.startPage + int(self.results_per_page)):
+            print("The totalResults fits in the current window, Next Button")
+        elif self.totalResults > (self.startPage + int(self.results_per_page)):
+
+            self.right_vbox.Clear(True)
+            self.startPage = self.startPage + int(self.results_per_page)
+
+            #api_url_search = "https://scihub.copernicus.eu/dhus/search?" + "rows=" + self.results_per_page + "&q="
+            api_url_search = "https://scihub.copernicus.eu/dhus/search?" + "start=" + str(self.startPage) + "&rows=" + self.results_per_page + "&q="
+            self.search_result_response = requests.get(api_url_search+self.search_query,
+                                                  auth = HTTPBasicAuth(self.username, self.password),
+                                                  allow_redirects=True)
+
+            if self.search_result_response.status_code == 401:
+
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label="There has been an error with the username and password. Please enter the correct username and password"))
+
+            elif self.search_result_response.status_code == 200:
+                self.search_result_root = ET.XML(self.search_result_response.content)
+                ET.indent(self.search_result_root)
+
+                self.totalResults = int(self.search_result_root.find("{*}totalResults").text)
+
+                #if self.totalResults > int(self.results_per_page):
+
+                #    self.results_page_hbox = wx.BoxSizer(wx.HORIZONTAL)
+                #    self.previous_page_button = wx.Button(self.left_panel, label="Previous page", name="Previous page Button")
+                #    self.next_page_button = wx.Button(self.left_panel, label="Next page", name="Next page Button")
+                #    self.results_page_hbox.Add(self.previous_page_button)
+                #    self.results_page_hbox.Add(self.next_page_button)
+
+                #    self.left_vbox.Add(self.results_page_hbox)
+
+                #    self.Bind(wx.EVT_BUTTON, self.PreviousButtonClick, id=self.previous_page_button.GetId())
+                #    self.Bind(wx.EVT_BUTTON, self.NextButtonClick, id=self.next_page_button.GetId())
+
+                search_title = self.search_result_root.find("{*}title")
+                search_subtitle = self.search_result_root.find("{*}subtitle")
+                search_items_per_page = self.search_result_root.find("{*}itemsPerPage")
+                
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label=search_title.text))
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label=search_subtitle.text))
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label=search_items_per_page.text))
+                self.right_vbox.Add(wx.StaticText(self.right_panel, label=""))
+
+                self.entries_dict = dict()
+                self.entry_number = self.startPage + 1
+
+                for entry in self.search_result_root.iter("{*}entry"):
+                    entry_id = entry.find("{*}id")
+                    entry_title = entry.find("{*}title")
+                    entry_summary = entry.find("{*}summary")
+                    self.right_vbox.Add(wx.StaticText(self.right_panel, label="Number: {}\nID: {}\nTitle: {}\nSummary: {}".format(self.entry_number, entry_id.text, entry_title.text, entry_summary.text), style=wx.ALIGN_LEFT))
+
+                    download_button = wx.Button(self.right_panel, label="Download")
+                    self.Bind(wx.EVT_BUTTON, self.DownloadData, id=download_button.GetId())
+                    self.right_vbox.Add(download_button)
+
+                    self.entries_dict[download_button.GetId()] = [entry_id.text, entry_title]
+
+                    for link in entry.findall("{*}link[@rel]"):
+                        if link.attrib['rel'] == 'icon':
+                            response = requests.get(link.attrib['href'],
+                                                    auth = HTTPBasicAuth(self.username, self.password),
+                                                    allow_redirects = True
+                                                    )
+                            #display(Image(response.content))
+                            wx.InitAllImageHandlers()
+                            stream = BytesIO(response.content)
+                            image = wx.Image(stream)
+                            #image = wx.Image(size=(600, 600), data=response.content)
+                            #print(response.text)
+                            #self.right_vbox.Add(wx.Image(response.content))
+                            #image = wx.Image(size=(100, 100), data=response.content)
+                            #image = wx.Image(response.text, type=wx.BITMAP_TYPE_PNG)
+                            #image = wx.Image(size=(200, 200), data=response.text)
+                            #self.right_vbox.Add(image)
+                            bitmap = wx.StaticBitmap(self.right_panel, bitmap=image)
+                            self.right_vbox.Add(bitmap)
+
+                    self.entry_number += 1
+                    self.right_vbox.Add(wx.StaticText(self.right_panel, label="---------------------------------------------------------------"))
+            #event.Skip()
+            # Note: You need to use Layout() to update the panel or Sizer.
+            self.right_panel.Layout()
+            self.right_vbox.Layout()
+
+    def ResultsPerPageCheck(self, results_per_page_value):
+        try:
+            results_per_page = int(results_per_page_value)
+        except ValueError:
+            print("Please enter an integer for the number of results per page.")
+            return False
+
+        if not (1 <= results_per_page <= 100):
+            print("Please ensure the results per page value is between 1 and 100.")
+            return False
+
+        return True
 
     def FromAndToDateCheck(self, from_date, to_date):
         try:
